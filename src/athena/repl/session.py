@@ -359,11 +359,23 @@ class DebugSession:
             )
 
         if self._is_generic_prompt(user_input):
+            if self._debugger.current_frame is not None:
+                return (
+                    "User request is generic/high-level bug finding. Follow this sequence:\n"
+                    "1) Run static_analyze_file on the active file to identify likely hotspots.\n"
+                    "2) Set targeted breakpoints on candidate lines.\n"
+                    "3) Continue/step execution to hit those breakpoints.\n"
+                    "4) Inspect runtime state (stack, locals, inspect_variable, "
+                    "evaluate_expression) to verify or refute hypotheses.\n"
+                    "5) Only then provide conclusions/fixes with observed evidence.\n\n"
+                    "Do not stop after static analysis.\n\nUser request:\n"
+                    f"{user_input}"
+                )
             return (
-                "User request is generic/high-level. First run static_analyze_file on "
-                "the current file before runtime probing. If no current frame exists, "
-                "call static_analyze_file with an explicit filename."
-                f"{target_hint}\nThen continue with targeted tools.\n\nUser request:\n"
+                "User request is generic/high-level. Run static_analyze_file with explicit "
+                "filename to identify candidate breakpoints."
+                f"{target_hint}\nIf runtime is not currently paused, say so clearly and "
+                "propose exact breakpoints to verify on next run.\n\nUser request:\n"
                 f"{user_input}"
             )
         return user_input
