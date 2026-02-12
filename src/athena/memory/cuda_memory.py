@@ -175,6 +175,21 @@ class CudaMemoryProfiler:
     def get_snapshot_labels(self) -> list[str]:
         return [label for label, _ in self._tensor_snapshots]
 
+    def export_snapshots(self) -> list[dict[str, Any]]:
+        """Export all tensor snapshots as serializable dicts for checkpointing."""
+        return [
+            {"label": label, "tensors": tensors}
+            for label, tensors in self._tensor_snapshots
+        ]
+
+    def restore_snapshots(self, snapshots: list[dict[str, Any]]) -> None:
+        """Restore tensor snapshots from checkpoint data."""
+        self._tensor_snapshots = [
+            (entry["label"], entry["tensors"])
+            for entry in snapshots
+            if "label" in entry and "tensors" in entry
+        ]
+
     def _find_snapshot(self, label: str) -> list[dict[str, Any]] | None:
         for lbl, snap in self._tensor_snapshots:
             if lbl == label:

@@ -3,8 +3,6 @@
 Run with: athena --trace-memory examples/memory_leak.py
 """
 
-import time
-
 
 class DataProcessor:
     """Processor that accumulates results."""

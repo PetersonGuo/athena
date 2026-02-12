@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass
@@ -58,6 +58,7 @@ class MemoryStateSummary:
     python_peak_human: str | None = None
     python_snapshot_labels: list[str] = field(default_factory=list)
     cuda_snapshot_labels: list[str] = field(default_factory=list)
+    cuda_tensor_snapshots: list[dict[str, Any]] = field(default_factory=list)
     leak_summary: dict[str, Any] | None = None
 
 
@@ -77,6 +78,8 @@ class PerfCheckpointSummary:
     stop_function: str | None = None
     python_current_bytes: int | None = None
     python_peak_bytes: int | None = None
+    cuda_allocated_bytes: int | None = None
+    cuda_peak_bytes: int | None = None
 
 
 @dataclass

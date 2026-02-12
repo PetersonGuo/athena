@@ -236,6 +236,10 @@ class DebugSession:
         current_bytes = memory.get("current_bytes") if "error" not in memory else None
         peak_bytes = memory.get("peak_bytes") if "error" not in memory else None
 
+        cuda_stats = self._cuda_memory.get_memory_stats()
+        cuda_allocated = cuda_stats.get("allocated_bytes") if "error" not in cuda_stats else None
+        cuda_peak = cuda_stats.get("max_allocated_bytes") if "error" not in cuda_stats else None
+
         checkpoint = PerfCheckpointSummary(
             label=resolved_label,
             created_at=datetime.now(UTC).isoformat(),
@@ -246,6 +250,8 @@ class DebugSession:
             stop_function=stop_function,
             python_current_bytes=current_bytes,
             python_peak_bytes=peak_bytes,
+            cuda_allocated_bytes=cuda_allocated,
+            cuda_peak_bytes=cuda_peak,
         )
         self._perf_checkpoints.append(checkpoint)
         return self._perf_checkpoint_to_dict(checkpoint)
@@ -276,6 +282,14 @@ class DebugSession:
         if cp_a.python_peak_bytes is not None and cp_b.python_peak_bytes is not None:
             memory_peak_delta = cp_b.python_peak_bytes - cp_a.python_peak_bytes
 
+        cuda_allocated_delta = None
+        if cp_a.cuda_allocated_bytes is not None and cp_b.cuda_allocated_bytes is not None:
+            cuda_allocated_delta = cp_b.cuda_allocated_bytes - cp_a.cuda_allocated_bytes
+
+        cuda_peak_delta = None
+        if cp_a.cuda_peak_bytes is not None and cp_b.cuda_peak_bytes is not None:
+            cuda_peak_delta = cp_b.cuda_peak_bytes - cp_a.cuda_peak_bytes
+
         result = {
             "label_a": cp_a.label,
             "label_b": cp_b.label,
@@ -285,6 +299,8 @@ class DebugSession:
             "process_delta_ms": process_delta_ns / 1_000_000,
             "memory_current_delta_bytes": memory_current_delta,
             "memory_peak_delta_bytes": memory_peak_delta,
+            "cuda_allocated_delta_bytes": cuda_allocated_delta,
+            "cuda_peak_delta_bytes": cuda_peak_delta,
             "checkpoint_a": self._perf_checkpoint_to_dict(cp_a),
             "checkpoint_b": self._perf_checkpoint_to_dict(cp_b),
         }
@@ -340,6 +356,8 @@ class DebugSession:
                 f"- CPU process delta: `{comparison.get('process_delta_ms')} ms`",
                 f"- Python current memory delta: `{comparison.get('memory_current_delta_bytes')} bytes`",
                 f"- Python peak memory delta: `{comparison.get('memory_peak_delta_bytes')} bytes`",
+                f"- CUDA allocated delta: `{comparison.get('cuda_allocated_delta_bytes')} bytes`",
+                f"- CUDA peak delta: `{comparison.get('cuda_peak_delta_bytes')} bytes`",
                 "",
             ])
         else:
@@ -397,6 +415,8 @@ class DebugSession:
             "stop_function": checkpoint.stop_function,
             "python_current_bytes": checkpoint.python_current_bytes,
             "python_peak_bytes": checkpoint.python_peak_bytes,
+            "cuda_allocated_bytes": checkpoint.cuda_allocated_bytes,
+            "cuda_peak_bytes": checkpoint.cuda_peak_bytes,
         }
 
     def capture_state_snapshot(self, reason: str) -> StateEnvelope:
@@ -433,6 +453,7 @@ class DebugSession:
         mem = self._python_memory.get_current_memory()
         py_labels = self._python_memory.get_snapshot_labels()
         cuda_labels = self._cuda_memory.get_snapshot_labels()
+        cuda_tensor_snapshots = self._cuda_memory.export_snapshots()
         leak_summary = None
         if len(py_labels) >= 2 or len(cuda_labels) >= 2:
             try:
@@ -474,6 +495,7 @@ class DebugSession:
                 python_peak_human=mem.get("peak_human") if "error" not in mem else None,
                 python_snapshot_labels=py_labels,
                 cuda_snapshot_labels=cuda_labels,
+                cuda_tensor_snapshots=cuda_tensor_snapshots,
                 leak_summary=leak_summary,
             ),
             agent=AgentStateSummary(
@@ -491,6 +513,8 @@ class DebugSession:
                         stop_function=cp.stop_function,
                         python_current_bytes=cp.python_current_bytes,
                         python_peak_bytes=cp.python_peak_bytes,
+                        cuda_allocated_bytes=cp.cuda_allocated_bytes,
+                        cuda_peak_bytes=cp.cuda_peak_bytes,
                     )
                     for cp in self._perf_checkpoints
                 ],
@@ -551,6 +575,8 @@ class DebugSession:
             self._llm.set_restored_summary(conv_summary)
         self._perf_checkpoints = list(state.perf.checkpoints)
         self._last_perf_comparison = state.perf.last_comparison
+        if state.memory.cuda_tensor_snapshots:
+            self._cuda_memory.restore_snapshots(state.memory.cuda_tensor_snapshots)
         self._active_script_path = state.meta.script_path or self._active_script_path
         self._active_script_args = list(state.meta.script_args or self._active_script_args)
 
