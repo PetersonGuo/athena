@@ -26,6 +26,7 @@ Slash commands (bypass the LLM, instant):
   /snapshot LABEL      Take memory snapshot
   /focus FILE/FUNC     Focus debugging on file or function
   /unfocus             Clear focus (stop everywhere)
+  /rerun               Rerun the target script from the beginning
   /quit, /q            Quit debugger and program
   /help, /h            Show this help
 
@@ -74,6 +75,7 @@ class CommandHandler:
             "/snapshot": self._snapshot,
             "/focus": self._focus,
             "/unfocus": self._unfocus,
+            "/rerun": self._rerun,
             "/quit": self._quit,
             "/q": self._quit,
             "/help": self._help,
@@ -214,6 +216,10 @@ class CommandHandler:
 
     def _quit(self, _arg: str) -> str | None:
         self._session.set_execution_action("quit")
+        return None
+
+    def _rerun(self, _arg: str) -> str | None:
+        self._session.set_execution_action("rerun")
         return None
 
     def _help(self, _arg: str) -> str:

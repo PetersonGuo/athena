@@ -95,6 +95,7 @@ class DebugSession:
         self._execution_action: str | None = None
         self._first_stop = True
         self._quitting = False
+        self._rerun_requested = False
         self._post_run_script_path: str | None = None
 
     # --- Public properties for CommandHandler access ---
@@ -126,6 +127,10 @@ class DebugSession:
     @property
     def is_quitting(self) -> bool:
         return self._quitting
+
+    @property
+    def is_rerun_requested(self) -> bool:
+        return self._rerun_requested
 
     def set_execution_action(self, action: str) -> None:
         """Set the execution control action (called by commands and tools)."""
@@ -201,6 +206,10 @@ class DebugSession:
             self._quitting = True
             self._formatter.show_info("Quitting Athena.")
             raise bdb.BdbQuit
+        elif action == "rerun":
+            self._rerun_requested = True
+            self._formatter.show_info("Restarting target script.")
+            raise bdb.BdbQuit
         else:
             # Default: continue
             self._debugger.do_continue()
@@ -242,6 +251,9 @@ class DebugSession:
             if user_input.lower() in ("quit", "exit", "q"):
                 self._execution_action = "quit"
                 break
+            if user_input.lower() in ("rerun", "restart"):
+                self._execution_action = "rerun"
+                break
 
             # Check for slash commands
             if user_input.startswith("/"):
@@ -279,13 +291,14 @@ class DebugSession:
             f"Target stopped ({reason}) for {self._post_run_script_path}."
         )
         self._formatter.show_info(
-            "Athena is still running. Type /quit (or quit/exit/q) to exit."
+            "Athena is still running. Type /rerun to run again, or /quit to exit."
         )
 
         self._llm.set_system_prompt(
             "The target process has stopped. You can still analyze pasted code, "
             "inspect/edit files, and suggest fixes. Do not use execution-control tools. "
-            f"When a filename is needed, use: {self._post_run_script_path}"
+            f"When a filename is needed, use: {self._post_run_script_path}. "
+            "If the user asks to verify with breakpoints/runtime behavior, call rerun_target first."
         )
 
         while not self._quitting:
@@ -309,6 +322,9 @@ class DebugSession:
             if user_input.lower() in ("quit", "exit", "q"):
                 self._quitting = True
                 break
+            if user_input.lower() in ("rerun", "restart"):
+                self._rerun_requested = True
+                break
 
             if user_input.startswith("/"):
                 result = self._command_handler.handle(user_input)
@@ -316,6 +332,9 @@ class DebugSession:
                     # Execution-control slash commands don't apply post-run.
                     if self._execution_action == "quit":
                         self._quitting = True
+                        break
+                    if self._execution_action == "rerun":
+                        self._rerun_requested = True
                         break
                     self._execution_action = None
                     self._formatter.show_info(
@@ -333,6 +352,14 @@ class DebugSession:
                     full_response += chunk
                 if full_response.strip():
                     self._formatter.show_model_response(full_response)
+
+                action = self._tool_executor.get_execution_action()
+                if action == "quit":
+                    self._quitting = True
+                    break
+                if action == "rerun":
+                    self._rerun_requested = True
+                    break
             except KeyboardInterrupt:
                 self._formatter.show_info("Interrupted. Type /quit to exit.")
             except Exception as e:
@@ -375,7 +402,7 @@ class DebugSession:
                 "User request is generic/high-level. Run static_analyze_file with explicit "
                 "filename to identify candidate breakpoints."
                 f"{target_hint}\nIf runtime is not currently paused, say so clearly and "
-                "propose exact breakpoints to verify on next run.\n\nUser request:\n"
+                "call rerun_target to verify with breakpoints in a live run.\n\nUser request:\n"
                 f"{user_input}"
             )
         return user_input

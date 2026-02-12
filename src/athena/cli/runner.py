@@ -35,75 +35,81 @@ class ScriptRunner:
             print(f"Error: File not found: {script_path}", file=sys.stderr)
             sys.exit(1)
 
-        # Build config
-        config = DebugConfig.from_env()
-        if model:
-            config.model = model
+        while True:
+            # Build config
+            config = DebugConfig.from_env()
+            if model:
+                config.model = model
 
-        # Create session
-        session = DebugSession(config=config)
-        self._bind_session_for_injected_breaks(session)
+            # Create session
+            session = DebugSession(config=config)
+            self._bind_session_for_injected_breaks(session)
 
-        # Configure
-        if break_on_exception:
-            session.debugger._break_on_exception = True
-
-        if trace_memory:
-            session.python_memory.start_tracing()
-
-        # Set focus
-        if focus_files:
-            session.debugger.set_focus_files(focus_files)
-        if focus_functions:
-            session.debugger.set_focus_functions(focus_functions)
-
-        # Set initial breakpoints
-        if initial_breakpoints:
-            for bp_spec in initial_breakpoints:
-                result = session.breakpoint_manager.add_from_spec(bp_spec)
-                if "error" in result:
-                    print(f"Warning: Could not set breakpoint {bp_spec}: {result['error']}",
-                          file=sys.stderr)
-
-        injected_lines = self._resolve_injected_break_lines(
-            script_path=script_path,
-            specs=injected_breaks or [],
-        )
-
-        # If not breaking on entry, skip the first debugger stop callback.
-        if not break_on_entry:
-            session.debugger._skip_first_stop = True
-
-        # Run the script
-        stop_reason = "completed"
-        try:
-            session.debugger.run_script(
-                script_path,
-                script_args,
-                injected_break_lines=injected_lines,
-            )
-        except bdb_module.BdbQuit:
-            stop_reason = "user_quit"
-        except SystemExit:
-            stop_reason = "system_exit"
-        except Exception as e:
-            stop_reason = f"exception: {type(e).__name__}"
-            print(f"\nUnhandled exception in target script: {type(e).__name__}: {e}",
-                  file=sys.stderr)
+            # Configure
             if break_on_exception:
-                # The debugger should have caught this
-                pass
-            else:
-                import traceback
-                traceback.print_exc()
+                session.debugger._break_on_exception = True
 
-        if (
-            not session.is_quitting
-            and stop_reason != "user_quit"
-            and sys.stdin.isatty()
-            and sys.stdout.isatty()
-        ):
-            session.enter_post_run_repl(script_path, stop_reason)
+            if trace_memory:
+                session.python_memory.start_tracing()
+
+            # Set focus
+            if focus_files:
+                session.debugger.set_focus_files(focus_files)
+            if focus_functions:
+                session.debugger.set_focus_functions(focus_functions)
+
+            # Set initial breakpoints
+            if initial_breakpoints:
+                for bp_spec in initial_breakpoints:
+                    result = session.breakpoint_manager.add_from_spec(bp_spec)
+                    if "error" in result:
+                        print(f"Warning: Could not set breakpoint {bp_spec}: {result['error']}",
+                              file=sys.stderr)
+
+            injected_lines = self._resolve_injected_break_lines(
+                script_path=script_path,
+                specs=injected_breaks or [],
+            )
+
+            # If not breaking on entry, skip the first debugger stop callback.
+            if not break_on_entry:
+                session.debugger._skip_first_stop = True
+
+            # Run the script
+            stop_reason = "completed"
+            try:
+                session.debugger.run_script(
+                    script_path,
+                    script_args,
+                    injected_break_lines=injected_lines,
+                )
+            except bdb_module.BdbQuit:
+                stop_reason = "user_quit"
+            except SystemExit:
+                stop_reason = "system_exit"
+            except Exception as e:
+                stop_reason = f"exception: {type(e).__name__}"
+                print(f"\nUnhandled exception in target script: {type(e).__name__}: {e}",
+                      file=sys.stderr)
+                if break_on_exception:
+                    # The debugger should have caught this
+                    pass
+                else:
+                    import traceback
+                    traceback.print_exc()
+
+            if (
+                not session.is_quitting
+                and stop_reason != "user_quit"
+                and sys.stdin.isatty()
+                and sys.stdout.isatty()
+            ):
+                session.enter_post_run_repl(script_path, stop_reason)
+
+            if session.is_rerun_requested:
+                print("\n[athena] Rerunning target script...\n")
+                continue
+            break
 
     @staticmethod
     def _bind_session_for_injected_breaks(session: DebugSession) -> None:

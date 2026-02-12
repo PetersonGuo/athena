@@ -349,6 +349,17 @@ class ToolExecutor:
             self._continue_execution,
         )
 
+        r.register(
+            "rerun_target",
+            "Rerun the target script from the beginning. Use this when the target has already stopped but runtime verification is needed.",
+            {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+            self._rerun_target,
+        )
+
         # === Watch Expressions ===
         r.register(
             "add_watch",
@@ -683,6 +694,10 @@ class ToolExecutor:
     def _continue_execution(self) -> dict:
         self._execution_action = "continue"
         return {"action": "continue", "message": "Execution will resume. Running until next breakpoint."}
+
+    def _rerun_target(self) -> dict:
+        self._execution_action = "rerun"
+        return {"action": "rerun", "message": "Target will be rerun from the beginning."}
 
     def _add_watch(self, expression: str) -> dict:
         msg = self._watches.add_watch(expression)

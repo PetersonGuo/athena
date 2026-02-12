@@ -40,6 +40,10 @@ class LLMClient:
         self._tool_executor: ToolExecutor | None = None
         self._tool_call_observer: Callable[[str, dict[str, Any]], None] | None = None
         self._system_prompt: str = ""
+        self._max_tool_rounds = 20
+        self._max_identical_write_calls = 2
+        self._tool_round_count = 0
+        self._write_call_signature_counts: dict[str, int] = {}
 
     def set_tool_executor(self, executor: ToolExecutor) -> None:
         self._tool_executor = executor
@@ -62,6 +66,7 @@ class LLMClient:
 
         Returns the model's final text response.
         """
+        self._reset_tool_call_guards()
         self._conversation.add_user_message(user_message)
 
         while True:
@@ -84,6 +89,12 @@ class LLMClient:
             self._conversation.add_assistant_message(self._message_to_dict(message))
 
             if message.tool_calls:
+                self._tool_round_count += 1
+                if self._tool_round_count > self._max_tool_rounds:
+                    return (
+                        "Stopped after too many tool-call rounds. "
+                        "Please refine the request or inspect the latest tool outputs."
+                    )
                 tool_results = self._process_tool_calls(message.tool_calls)
                 for result in tool_results:
                     self._conversation.add_tool_result(result)
@@ -100,6 +111,7 @@ class LLMClient:
         Tool calls are handled between streaming segments.
         Returns the full response text.
         """
+        self._reset_tool_call_guards()
         self._conversation.add_user_message(user_message)
         full_response = ""
 
@@ -175,6 +187,15 @@ class LLMClient:
             self._conversation.add_assistant_message(assistant_msg)
 
             if finish_reason == "tool_calls" and tool_calls_accum:
+                self._tool_round_count += 1
+                if self._tool_round_count > self._max_tool_rounds:
+                    warning = (
+                        "\n\nStopped after too many tool-call rounds. "
+                        "Please refine the request or inspect the latest tool outputs."
+                    )
+                    if not full_response:
+                        yield warning
+                    return full_response + warning
                 tool_results = self._process_accumulated_tool_calls(tool_calls_accum)
                 for result in tool_results:
                     self._conversation.add_tool_result(result)
@@ -245,7 +266,32 @@ class LLMClient:
             return json.dumps({"error": "No tool executor configured"})
         if self._tool_call_observer:
             self._tool_call_observer(name, input_data)
+        if name in {"replace_text_in_file", "replace_file_contents"}:
+            signature = self._tool_call_signature(name, input_data)
+            count = self._write_call_signature_counts.get(signature, 0) + 1
+            self._write_call_signature_counts[signature] = count
+            if count > self._max_identical_write_calls:
+                return json.dumps({
+                    "error": (
+                        "Loop guard: repeated identical file-edit call blocked. "
+                        "Change tool arguments or inspect runtime state before editing again."
+                    ),
+                    "tool": name,
+                    "repeated_calls": count,
+                })
         return self._tool_executor.registry.execute(name, input_data)
+
+    def _reset_tool_call_guards(self) -> None:
+        self._tool_round_count = 0
+        self._write_call_signature_counts.clear()
+
+    @staticmethod
+    def _tool_call_signature(name: str, input_data: dict[str, Any]) -> str:
+        try:
+            payload = json.dumps(input_data, sort_keys=True)
+        except TypeError:
+            payload = repr(input_data)
+        return f"{name}:{payload}"
 
     @staticmethod
     def _message_to_dict(message: Any) -> dict[str, Any]:
