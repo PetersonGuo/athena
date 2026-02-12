@@ -41,9 +41,7 @@ class LLMClient:
         self._tool_call_observer: Callable[[str, dict[str, Any]], None] | None = None
         self._system_prompt: str = ""
         self._tool_schema_override: list[dict[str, Any]] | None = None
-        self._max_tool_rounds = 20
         self._max_identical_write_calls = 2
-        self._tool_round_count = 0
         self._write_call_signature_counts: dict[str, int] = {}
         self._restored_summary: dict[str, Any] | None = None
 
@@ -108,12 +106,6 @@ class LLMClient:
             self._conversation.add_assistant_message(self._message_to_dict(message))
 
             if message.tool_calls:
-                self._tool_round_count += 1
-                if self._tool_round_count > self._max_tool_rounds:
-                    return (
-                        "Stopped after too many tool-call rounds. "
-                        "Please refine the request or inspect the latest tool outputs."
-                    )
                 tool_results = self._process_tool_calls(message.tool_calls)
                 for result in tool_results:
                     self._conversation.add_tool_result(result)
@@ -206,15 +198,6 @@ class LLMClient:
             self._conversation.add_assistant_message(assistant_msg)
 
             if finish_reason == "tool_calls" and tool_calls_accum:
-                self._tool_round_count += 1
-                if self._tool_round_count > self._max_tool_rounds:
-                    warning = (
-                        "\n\nStopped after too many tool-call rounds. "
-                        "Please refine the request or inspect the latest tool outputs."
-                    )
-                    if not full_response:
-                        yield warning
-                    return full_response + warning
                 tool_results = self._process_accumulated_tool_calls(tool_calls_accum)
                 for result in tool_results:
                     self._conversation.add_tool_result(result)
@@ -312,7 +295,6 @@ class LLMClient:
         return self._tool_executor.registry.execute(name, input_data)
 
     def _reset_tool_call_guards(self) -> None:
-        self._tool_round_count = 0
         self._write_call_signature_counts.clear()
 
     @staticmethod
