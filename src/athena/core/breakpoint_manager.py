@@ -93,6 +93,36 @@ class BreakpointManager:
             })
         return result
 
+    def clear_all_breakpoints(self) -> int:
+        """Remove all currently registered breakpoints."""
+        removed = 0
+        for bp in list(bdb.Breakpoint.bpbynumber):
+            if bp is None:
+                continue
+            err = self._debugger.clear_break(bp.file, bp.line)
+            if not err:
+                removed += 1
+        return removed
+
+    def apply_breakpoint_runtime_state(
+        self,
+        filename: str,
+        lineno: int,
+        enabled: bool,
+        hits: int,
+        ignore_count: int,
+    ) -> None:
+        """Best-effort restore of mutable breakpoint runtime state."""
+        filename = os.path.abspath(filename)
+        bp_map = bdb.Breakpoint.bplist.get(filename, {})
+        bp_list = bp_map.get(lineno, [])
+        if not bp_list:
+            return
+        bp = bp_list[-1]
+        bp.enabled = enabled
+        bp.hits = hits
+        bp.ignore = ignore_count
+
     def add_from_spec(self, spec: str) -> dict[str, Any]:
         """Parse a breakpoint spec like 'file.py:42' or 'file.py:42 if x > 5'."""
         condition = None

@@ -62,6 +62,38 @@ class ConversationManager:
             + result[-half:]
         )
 
+    def export_summary(
+        self,
+        max_messages: int = 12,
+        max_chars_per_message: int = 240,
+    ) -> dict[str, Any]:
+        """Return a compact summary suitable for persisted state."""
+        recent = self._messages[-max_messages:]
+        summary_messages: list[dict[str, Any]] = []
+        for msg in recent:
+            role = msg.get("role", "unknown")
+            content = msg.get("content")
+            if isinstance(content, str):
+                content_preview = content[:max_chars_per_message]
+            else:
+                content_preview = ""
+            tool_calls = msg.get("tool_calls")
+            tool_names: list[str] = []
+            if isinstance(tool_calls, list):
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+                        tool_names.append(fn["name"])
+            summary_messages.append({
+                "role": role,
+                "content_preview": content_preview,
+                "tool_calls": tool_names,
+            })
+        return {
+            "message_count": len(self._messages),
+            "recent": summary_messages,
+        }
+
     @property
     def message_count(self) -> int:
         return len(self._messages)

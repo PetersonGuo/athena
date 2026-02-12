@@ -3,3 +3,5 @@
 .claude
 .pytest_cache
 **/__pycache__/
+.athena/state/
+.athena/issues/

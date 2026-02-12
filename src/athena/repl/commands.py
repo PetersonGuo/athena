@@ -26,6 +26,14 @@ Slash commands (bypass the LLM, instant):
   /snapshot LABEL      Take memory snapshot
   /focus FILE/FUNC     Focus debugging on file or function
   /unfocus             Clear focus (stop everywhere)
+  /save-state [NAME]   Save restorable debugger/agent state
+  /load-state [ID]     Load restorable state (default: latest)
+  /list-states         List available saved states
+  /restore-next [ID]   Queue state restore for next rerun
+  /perf-checkpoint [L] Capture performance checkpoint
+  /perf-checkpoints    List captured performance checkpoints
+  /perf-compare A B    Compare two performance checkpoints
+  /perf-issue [TITLE]  Generate persisted perf issue report
   /rerun               Rerun the target script from the beginning
   /quit, /q            Quit debugger and program
   /help, /h            Show this help
@@ -75,6 +83,14 @@ class CommandHandler:
             "/snapshot": self._snapshot,
             "/focus": self._focus,
             "/unfocus": self._unfocus,
+            "/save-state": self._save_state,
+            "/load-state": self._load_state,
+            "/list-states": self._list_states,
+            "/restore-next": self._restore_next,
+            "/perf-checkpoint": self._perf_checkpoint,
+            "/perf-checkpoints": self._perf_checkpoints,
+            "/perf-compare": self._perf_compare,
+            "/perf-issue": self._perf_issue,
             "/rerun": self._rerun,
             "/quit": self._quit,
             "/q": self._quit,
@@ -129,6 +145,7 @@ class CommandHandler:
     def _break(self, arg: str) -> str:
         if not arg:
             return "Usage: /break FILE:LINE [if CONDITION]"
+        self._session.save_operation_checkpoint("command_break", "before")
         result = self._session.breakpoint_manager.add_from_spec(arg)
         if "error" in result:
             return result["error"]
@@ -151,11 +168,13 @@ class CommandHandler:
     def _watch(self, arg: str) -> str:
         if not arg:
             return "Usage: /watch EXPRESSION"
+        self._session.save_operation_checkpoint("command_watch", "before")
         return self._session.watch_manager.add_watch(arg)
 
     def _unwatch(self, arg: str) -> str:
         if not arg:
             return "Usage: /unwatch EXPRESSION"
+        self._session.save_operation_checkpoint("command_unwatch", "before")
         removed = self._session.watch_manager.remove_watch(arg)
         return f"Removed watch: {arg}" if removed else f"Watch not found: {arg}"
 
@@ -204,15 +223,111 @@ class CommandHandler:
             return "Focus: " + "; ".join(parts)
 
         if arg.startswith("@"):
+            self._session.save_operation_checkpoint("command_focus", "before")
             self._session.debugger.add_focus_function(arg[1:])
             return f"Focus added: function {arg[1:]}"
         else:
+            self._session.save_operation_checkpoint("command_focus", "before")
             self._session.debugger.add_focus_file(arg)
             return f"Focus added: file {arg}"
 
     def _unfocus(self, _arg: str) -> str:
+        self._session.save_operation_checkpoint("command_unfocus", "before")
         self._session.debugger.clear_focus()
         return "Focus cleared. Debugger will stop everywhere."
+
+    def _save_state(self, arg: str) -> str:
+        name = arg.strip() if arg else None
+        result = self._session.save_state(name=name, auto=False, reason="manual")
+        if "error" in result:
+            return f"State save failed: {result['error']}"
+        return f"State saved: {result.get('path', '')}"
+
+    def _load_state(self, arg: str) -> str:
+        selector = arg.strip() if arg else "latest"
+        result = self._session.load_state(selector=selector)
+        if "error" in result:
+            return f"State load failed: {result['error']}"
+        warnings = result.get("warnings", [])
+        parts = [f"State loaded: {result.get('path', '')}"]
+        if warnings:
+            parts.append("Warnings:")
+            parts.extend([f"  - {w}" for w in warnings])
+        return "\n".join(parts)
+
+    def _list_states(self, _arg: str) -> str:
+        states = self._session.list_states()
+        if not states:
+            return "No saved states found."
+        lines = ["Saved states:"]
+        for s in states:
+            name = f" name={s.get('name')}" if s.get("name") else ""
+            lines.append(
+                f"  {s.get('created_at')} [{s.get('kind')}] {s.get('path')}{name}"
+            )
+        return "\n".join(lines)
+
+    def _restore_next(self, arg: str) -> str:
+        selector = arg.strip() if arg else "latest"
+        result = self._session.queue_checkpoint_restore(selector=selector)
+        if "error" in result:
+            return f"Queue restore failed: {result['error']}"
+        return result.get("message", "Restore queued.")
+
+    def _perf_checkpoint(self, arg: str) -> str:
+        label = arg.strip() if arg else None
+        result = self._session.create_perf_checkpoint(label=label)
+        if "error" in result:
+            return result["error"]
+        return (
+            f"Perf checkpoint '{result['label']}' captured "
+            f"(wall={result['wall_time_ns']} ns, process={result['process_time_ns']} ns)."
+        )
+
+    def _perf_checkpoints(self, _arg: str) -> str:
+        checkpoints = self._session.list_perf_checkpoints()
+        if not checkpoints:
+            return "No perf checkpoints captured."
+        lines = ["Perf checkpoints:"]
+        for cp in checkpoints:
+            location = (
+                f"{cp.get('stop_file')}:{cp.get('stop_line')} in {cp.get('stop_function')}"
+                if cp.get("stop_file")
+                else "unknown location"
+            )
+            lines.append(
+                f"  {cp.get('label')} at {cp.get('created_at')} ({location})"
+            )
+        return "\n".join(lines)
+
+    def _perf_compare(self, arg: str) -> str:
+        parts = arg.split()
+        if len(parts) != 2:
+            return "Usage: /perf-compare LABEL_A LABEL_B"
+        result = self._session.compare_perf_checkpoints(parts[0], parts[1])
+        if "error" in result:
+            return result["error"]
+        return (
+            f"Perf compare {result['label_a']} -> {result['label_b']}: "
+            f"wall={result['wall_delta_ms']} ms, "
+            f"process={result['process_delta_ms']} ms, "
+            f"current_mem_delta={result['memory_current_delta_bytes']} bytes, "
+            f"peak_mem_delta={result['memory_peak_delta_bytes']} bytes"
+        )
+
+    def _perf_issue(self, arg: str) -> str:
+        title = arg.strip() if arg else None
+        result = self._session.generate_perf_issue_report(
+            title=title,
+            selector="latest",
+            persist=True,
+        )
+        if "error" in result:
+            return result["error"]
+        path = result.get("path")
+        if path:
+            return f"Perf issue report written to {path}"
+        return result.get("report", "")
 
     def _quit(self, _arg: str) -> str | None:
         self._session.set_execution_action("quit")

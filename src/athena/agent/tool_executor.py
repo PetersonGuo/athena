@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from athena.agent.tool_registry import ToolRegistry
@@ -56,6 +57,7 @@ class ToolExecutor:
 
         self.registry = ToolRegistry()
         self._execution_action: str | None = None
+        self._session_ops: dict[str, Callable[..., Any]] = {}
 
         self._register_all_tools()
 
@@ -64,6 +66,10 @@ class ToolExecutor:
         action = self._execution_action
         self._execution_action = None
         return action
+
+    def bind_session_operations(self, operations: dict[str, Callable[..., Any]]) -> None:
+        """Attach session-owned operations that tools can delegate to."""
+        self._session_ops = dict(operations)
 
     def _register_all_tools(self) -> None:
         r = self.registry
@@ -594,6 +600,113 @@ class ToolExecutor:
             self._clear_focus,
         )
 
+        # === Checkpoint State and Performance Workflow ===
+        r.register(
+            "save_checkpoint_state",
+            "Persist current Athena debugger/agent state as a named checkpoint.",
+            {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Optional checkpoint name"},
+                },
+                "required": [],
+            },
+            self._save_checkpoint_state,
+        )
+
+        r.register(
+            "list_checkpoint_states",
+            "List available persisted Athena checkpoint states for the current script.",
+            {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+            self._list_checkpoint_states,
+        )
+
+        r.register(
+            "load_checkpoint_state",
+            "Load a persisted Athena state. If immediate apply is unsafe, queue restore for rerun.",
+            {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "default": "latest"},
+                    "apply_now": {"type": "boolean", "default": True},
+                },
+                "required": [],
+            },
+            self._load_checkpoint_state,
+        )
+
+        r.register(
+            "queue_checkpoint_restore",
+            "Queue a checkpoint state selector to be restored automatically on the next rerun.",
+            {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "default": "latest"},
+                },
+                "required": [],
+            },
+            self._queue_checkpoint_restore,
+        )
+
+        r.register(
+            "create_perf_checkpoint",
+            "Capture a runtime performance checkpoint (wall time, process CPU time, memory summary).",
+            {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                },
+                "required": [],
+            },
+            self._create_perf_checkpoint,
+        )
+
+        r.register(
+            "list_perf_checkpoints",
+            "List all captured runtime performance checkpoints.",
+            {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+            self._list_perf_checkpoints,
+        )
+
+        r.register(
+            "compare_perf_checkpoints",
+            "Compare two runtime performance checkpoints to compute wall/CPU/memory deltas.",
+            {
+                "type": "object",
+                "properties": {
+                    "label_a": {"type": "string"},
+                    "label_b": {"type": "string"},
+                },
+                "required": ["label_a", "label_b"],
+            },
+            self._compare_perf_checkpoints,
+        )
+
+        r.register(
+            "generate_perf_issue_report",
+            "Generate a markdown performance issue report tied to checkpoint comparisons and restore selectors.",
+            {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "baseline_label": {"type": "string"},
+                    "current_label": {"type": "string"},
+                    "selector": {"type": "string", "default": "latest"},
+                    "persist": {"type": "boolean", "default": False},
+                },
+                "required": [],
+            },
+            self._generate_perf_issue_report,
+        )
+
     # === Handler implementations ===
 
     def _inspect_variable(self, name: str, frame_index: int | None = None, max_depth: int = 3) -> dict:
@@ -647,6 +760,7 @@ class ToolExecutor:
         return self._source.find_snippet_lines(filename, snippet)
 
     def _replace_file_contents(self, filename: str, content: str, create_if_missing: bool = False) -> dict:
+        self._checkpoint_operation("replace_file_contents")
         return self._source.write_file_source(
             filename=filename,
             content=content,
@@ -660,6 +774,7 @@ class ToolExecutor:
         new_text: str,
         max_replacements: int = -1,
     ) -> dict:
+        self._checkpoint_operation("replace_text_in_file")
         return self._source.replace_text_in_file(
             filename=filename,
             old_text=old_text,
@@ -671,9 +786,11 @@ class ToolExecutor:
         return self._inspector.get_stack_frames()
 
     def _set_breakpoint(self, lineno: int, filename: str | None = None, condition: str | None = None) -> dict:
+        self._checkpoint_operation("set_breakpoint")
         return self._breakpoints.set_breakpoint(filename, lineno, condition)
 
     def _remove_breakpoint(self, bp_number: int | None = None, filename: str | None = None, lineno: int | None = None) -> dict:
+        self._checkpoint_operation("remove_breakpoint")
         return self._breakpoints.remove_breakpoint(bp_number, filename, lineno)
 
     def _list_breakpoints(self) -> list[dict]:
@@ -700,10 +817,12 @@ class ToolExecutor:
         return {"action": "rerun", "message": "Target will be rerun from the beginning."}
 
     def _add_watch(self, expression: str) -> dict:
+        self._checkpoint_operation("add_watch")
         msg = self._watches.add_watch(expression)
         return {"message": msg}
 
     def _remove_watch(self, expression: str) -> dict:
+        self._checkpoint_operation("remove_watch")
         removed = self._watches.remove_watch(expression)
         return {"removed": removed, "expression": expression}
 
@@ -766,6 +885,7 @@ class ToolExecutor:
         return self._leak_detector.analyze()
 
     def _set_focus(self, files: list[str] | None = None, functions: list[str] | None = None) -> dict:
+        self._checkpoint_operation("set_focus")
         if files:
             self._debugger.set_focus_files(files)
         if functions:
@@ -776,5 +896,66 @@ class ToolExecutor:
         }
 
     def _clear_focus(self) -> dict:
+        self._checkpoint_operation("clear_focus")
         self._debugger.clear_focus()
         return {"message": "Focus cleared. Debugger will stop everywhere."}
+
+    def _save_checkpoint_state(self, name: str | None = None) -> dict:
+        return self._call_session_op("save_checkpoint_state", name=name)
+
+    def _list_checkpoint_states(self) -> Any:
+        return self._call_session_op("list_checkpoint_states")
+
+    def _load_checkpoint_state(self, selector: str = "latest", apply_now: bool = True) -> dict:
+        return self._call_session_op(
+            "load_checkpoint_state",
+            selector=selector,
+            apply_now=apply_now,
+        )
+
+    def _queue_checkpoint_restore(self, selector: str = "latest") -> dict:
+        return self._call_session_op("queue_checkpoint_restore", selector=selector)
+
+    def _create_perf_checkpoint(self, label: str | None = None) -> dict:
+        return self._call_session_op("create_perf_checkpoint", label=label)
+
+    def _list_perf_checkpoints(self) -> Any:
+        return self._call_session_op("list_perf_checkpoints")
+
+    def _compare_perf_checkpoints(self, label_a: str, label_b: str) -> dict:
+        return self._call_session_op(
+            "compare_perf_checkpoints",
+            label_a=label_a,
+            label_b=label_b,
+        )
+
+    def _generate_perf_issue_report(
+        self,
+        title: str | None = None,
+        baseline_label: str | None = None,
+        current_label: str | None = None,
+        selector: str = "latest",
+        persist: bool = False,
+    ) -> dict:
+        return self._call_session_op(
+            "generate_perf_issue_report",
+            title=title,
+            baseline_label=baseline_label,
+            current_label=current_label,
+            selector=selector,
+            persist=persist,
+        )
+
+    def _call_session_op(self, name: str, **kwargs: Any) -> Any:
+        op = self._session_ops.get(name)
+        if op is None:
+            return {"error": f"Session operation unavailable: {name}"}
+        return op(**kwargs)
+
+    def _checkpoint_operation(self, operation: str) -> None:
+        """Best-effort pre-mutation checkpoint for non-perf debugger workflows."""
+        self._call_session_op(
+            "save_operation_checkpoint",
+            operation=operation,
+            stage="before",
+        )

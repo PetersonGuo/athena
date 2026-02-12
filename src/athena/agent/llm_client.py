@@ -44,6 +44,7 @@ class LLMClient:
         self._max_identical_write_calls = 2
         self._tool_round_count = 0
         self._write_call_signature_counts: dict[str, int] = {}
+        self._restored_summary: dict[str, Any] | None = None
 
     def set_tool_executor(self, executor: ToolExecutor) -> None:
         self._tool_executor = executor
@@ -60,6 +61,13 @@ class LLMClient:
 
     def reset_conversation(self) -> None:
         self._conversation.clear()
+        self._restored_summary = None
+
+    def set_restored_summary(self, summary: dict[str, Any] | None) -> None:
+        self._restored_summary = summary
+
+    def get_conversation_summary(self) -> dict[str, Any]:
+        return self._conversation.export_summary()
 
     def send_message(self, user_message: str) -> str:
         """Send a message and handle the full tool call loop.
@@ -215,6 +223,15 @@ class LLMClient:
         messages: list[dict[str, Any]] = []
         if self._system_prompt:
             messages.append({"role": "system", "content": self._system_prompt})
+        if self._restored_summary:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Restored session summary from previous run. Use as context only; "
+                    "verify assumptions with live tools.\n"
+                    + json.dumps(self._restored_summary)
+                ),
+            })
         messages.extend(self._conversation.get_messages())
         return messages
 

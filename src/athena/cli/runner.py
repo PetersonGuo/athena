@@ -29,21 +29,46 @@ class ScriptRunner:
         focus_functions: list[str] | None = None,
         model: str | None = None,
         trace_memory: bool = False,
+        restore_selector: str | None = None,
+        state_dir: str | None = None,
+        auto_save_state: bool | None = None,
+        perf_mode: bool = False,
     ) -> None:
         script_path = os.path.abspath(script_path)
         if not os.path.isfile(script_path):
             print(f"Error: File not found: {script_path}", file=sys.stderr)
             sys.exit(1)
 
+        next_restore_selector = restore_selector
         while True:
             # Build config
             config = DebugConfig.from_env()
             if model:
                 config.model = model
+            if state_dir:
+                config.state_dir = state_dir
+            if auto_save_state is not None:
+                config.auto_save_state = auto_save_state
+            if perf_mode:
+                config.perf_mode = True
 
             # Create session
             session = DebugSession(config=config)
             self._bind_session_for_injected_breaks(session)
+            session.set_active_target(script_path, script_args or [])
+
+            if next_restore_selector:
+                restore_result = session.load_state(
+                    selector=next_restore_selector,
+                    expected_script_path=script_path,
+                )
+                if "error" in restore_result:
+                    print(f"Warning: could not restore state: {restore_result['error']}", file=sys.stderr)
+                else:
+                    path = restore_result.get("path", "")
+                    print(f"[athena] Restored state from {path}")
+                    for warning in restore_result.get("warnings", []):
+                        print(f"Warning: {warning}", file=sys.stderr)
 
             # Configure
             if break_on_exception:
@@ -108,6 +133,11 @@ class ScriptRunner:
 
             if session.is_rerun_requested:
                 print("\n[athena] Rerunning target script...\n")
+                queued_selector = session.consume_queued_restore_selector()
+                if queued_selector:
+                    next_restore_selector = queued_selector
+                elif next_restore_selector is None:
+                    next_restore_selector = "latest"
                 continue
             break
 

@@ -84,6 +84,33 @@ def main(argv: list[str] | None = None) -> None:
         default=False,
         help="Enable tracemalloc from startup",
     )
+    parser.add_argument(
+        "--restore",
+        nargs="?",
+        const="latest",
+        default=None,
+        metavar="STATE",
+        help="Restore persisted Athena state (default when flag present: latest)",
+    )
+    parser.add_argument(
+        "--state-dir",
+        default=None,
+        metavar="PATH",
+        help="Directory for persisted Athena state files (default: .athena/state)",
+    )
+    parser.add_argument(
+        "--no-auto-save-state",
+        action="store_false",
+        dest="auto_save_state",
+        default=None,
+        help="Disable automatic state snapshots during this run",
+    )
+    parser.add_argument(
+        "--perf-mode",
+        action="store_true",
+        default=False,
+        help="Enable checkpointed performance-debug workflow guidance",
+    )
 
     args = parser.parse_args(argv)
 
@@ -108,6 +135,10 @@ def main(argv: list[str] | None = None) -> None:
         focus_functions=args.focus_functions,
         model=args.model,
         trace_memory=args.trace_memory,
+        restore_selector=args.restore,
+        state_dir=args.state_dir,
+        auto_save_state=args.auto_save_state,
+        perf_mode=args.perf_mode,
     )
 
 

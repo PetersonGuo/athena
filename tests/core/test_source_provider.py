@@ -69,3 +69,16 @@ def test_find_snippet_lines(tmp_path):
     assert result["match_count"] == 1
     assert result["matches"][0]["start_line"] == 2
     assert result["matches"][0]["end_line"] == 3
+
+
+def test_remap_line_by_snippet(tmp_path):
+    provider = SourceProvider()
+    file_path = tmp_path / "shifted.py"
+    file_path.write_text("a = 0\nx = 1\ny = 2\n")
+
+    remapped = provider.remap_line_by_snippet(
+        str(file_path),
+        preferred_line=10,
+        snippet="x = 1",
+    )
+    assert remapped == 2

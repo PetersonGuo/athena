@@ -121,6 +121,50 @@ class SourceProvider:
             "matches": matches,
         }
 
+    def get_line_text(self, filename: str, lineno: int) -> str | None:
+        """Return a single line of source text, or None if unavailable."""
+        result = self.get_file_source(filename, lineno, lineno)
+        if "error" in result:
+            return None
+        lines = result.get("lines", {})
+        return lines.get(lineno)
+
+    def remap_line_by_snippet(
+        self,
+        filename: str,
+        preferred_line: int,
+        snippet: str,
+        search_radius: int = 80,
+    ) -> int | None:
+        """Best-effort line remap based on saved snippet text."""
+        filename = os.path.abspath(filename)
+        if not os.path.isfile(filename):
+            return None
+        target = snippet.strip()
+        if not target:
+            return preferred_line
+
+        try:
+            with open(filename) as f:
+                lines = f.read().splitlines()
+        except Exception:
+            return None
+
+        if 1 <= preferred_line <= len(lines):
+            if lines[preferred_line - 1].strip() == target:
+                return preferred_line
+
+        start = max(1, preferred_line - search_radius)
+        end = min(len(lines), preferred_line + search_radius)
+        for lineno in range(start, end + 1):
+            if lines[lineno - 1].strip() == target:
+                return lineno
+
+        for lineno, line in enumerate(lines, start=1):
+            if line.strip() == target:
+                return lineno
+        return None
+
     def write_file_source(
         self,
         filename: str,
