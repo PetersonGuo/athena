@@ -11,6 +11,8 @@ def calculate_average(numbers):
     for num in numbers:
         total += num
         count += 1
+    if count == 0:
+        return 0  # Handle empty list case
     return total / count
 
 

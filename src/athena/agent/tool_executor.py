@@ -24,6 +24,35 @@ from athena.core.static_analyzer import StaticAnalyzer
 # Sentinel returned by execution control tools to signal REPL exit
 EXECUTION_CONTROL_SENTINEL = "__EXECUTION_CONTROL__"
 
+# Tools that require a live paused frame (not available in pre-run mode)
+RUNTIME_ONLY_TOOLS: set[str] = {
+    "inspect_variable",
+    "get_all_locals",
+    "get_closure_vars",
+    "evaluate_expression",
+    "get_source_context",
+    "get_call_stack",
+    "step_into",
+    "step_over",
+    "step_out",
+    "continue_execution",
+    "rerun_target",
+    "memory_snapshot",
+    "memory_compare",
+    "memory_top_allocations",
+    "memory_current",
+    "gc_stats",
+    "object_references",
+    "cuda_memory_stats",
+    "cuda_memory_summary",
+    "cuda_live_tensors",
+    "cuda_tensor_snapshot",
+    "cuda_tensor_compare",
+    "detect_leaks",
+    "create_perf_checkpoint",
+    "compare_perf_checkpoints",
+}
+
 
 class ToolExecutor:
     """Bridges model tool calls to the actual debugger components.
@@ -70,6 +99,10 @@ class ToolExecutor:
     def bind_session_operations(self, operations: dict[str, Callable[..., Any]]) -> None:
         """Attach session-owned operations that tools can delegate to."""
         self._session_ops = dict(operations)
+
+    def get_pre_run_tool_schemas(self) -> list[dict[str, Any]]:
+        """Return tool schemas excluding runtime-only tools (for pre-run REPL)."""
+        return self.registry.get_tool_schemas(exclude=RUNTIME_ONLY_TOOLS)
 
     def _register_all_tools(self) -> None:
         r = self.registry
@@ -364,6 +397,18 @@ class ToolExecutor:
                 "required": [],
             },
             self._rerun_target,
+        )
+
+        r.register(
+            "run_target",
+            "Start executing the target script. Only available before the script has been run. "
+            "Use this after setting breakpoints and configuring the debugger in the pre-run phase.",
+            {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+            self._run_target,
         )
 
         # === Watch Expressions ===
@@ -815,6 +860,10 @@ class ToolExecutor:
     def _rerun_target(self) -> dict:
         self._execution_action = "rerun"
         return {"action": "rerun", "message": "Target will be rerun from the beginning."}
+
+    def _run_target(self) -> dict:
+        self._execution_action = "run"
+        return {"action": "run", "message": "Target script will now start executing."}
 
     def _add_watch(self, expression: str) -> dict:
         self._checkpoint_operation("add_watch")

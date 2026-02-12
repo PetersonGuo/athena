@@ -43,10 +43,19 @@ class ToolRegistry:
             handler=handler,
         )
 
-    def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """Return all tool schemas in OpenAI function calling format."""
+    def get_tool_schemas(
+        self,
+        exclude: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return tool schemas in OpenAI function calling format.
+
+        Args:
+            exclude: Optional set of tool names to omit from the returned list.
+        """
         schemas = []
         for tool in self._tools.values():
+            if exclude and tool.name in exclude:
+                continue
             schemas.append({
                 "type": "function",
                 "function": {

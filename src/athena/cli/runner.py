@@ -100,6 +100,12 @@ class ScriptRunner:
             if not break_on_entry:
                 session.debugger._skip_first_stop = True
 
+            # Pre-run REPL: let user set breakpoints, inspect source, etc.
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                should_run = session.enter_pre_run_repl(script_path)
+                if not should_run:
+                    break
+
             # Run the script
             stop_reason = "completed"
             try:

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 HELP_TEXT = """\
 Slash commands (bypass the LLM, instant):
+  /run                 Start executing the target script (pre-run only)
   /locals, /l          Show all local variables
   /stack, /bt          Show call stack
   /source, /src        Show source around current line
@@ -59,6 +60,7 @@ class CommandHandler:
         arg = parts[1] if len(parts) > 1 else ""
 
         handlers = {
+            "/run": self._run,
             "/locals": self._locals,
             "/l": self._locals,
             "/stack": self._stack,
@@ -328,6 +330,10 @@ class CommandHandler:
         if path:
             return f"Perf issue report written to {path}"
         return result.get("report", "")
+
+    def _run(self, _arg: str) -> str | None:
+        self._session.set_execution_action("run")
+        return None
 
     def _quit(self, _arg: str) -> str | None:
         self._session.set_execution_action("quit")

@@ -13,7 +13,7 @@ from typing import Any
 
 from athena import __version__ as athena_version
 from athena.agent.llm_client import LLMClient
-from athena.agent.system_prompt import build_stop_context
+from athena.agent.system_prompt import PRE_RUN_SYSTEM_PROMPT, build_stop_context
 from athena.agent.tool_executor import ToolExecutor
 from athena.core.breakpoint_manager import BreakpointManager
 from athena.core.debugger import DebuggerCore
@@ -789,6 +789,101 @@ class DebugSession:
             except Exception as e:
                 self._formatter.show_error(f"LLM API error: {e}")
 
+    def enter_pre_run_repl(self, script_path: str) -> bool:
+        """GDB-style pre-run REPL: set breakpoints, inspect source, then /run.
+
+        Returns True if the user wants to run the script, False if they quit.
+        """
+        self._formatter.show_banner()
+        self._formatter.show_info(
+            f"Target: {script_path} (not yet running)"
+        )
+        self._formatter.show_info(
+            "Set breakpoints, inspect source, then type /run to start execution."
+        )
+
+        # Configure LLM for pre-run: restricted tool set, pre-run prompt
+        self._llm.set_system_prompt(
+            PRE_RUN_SYSTEM_PROMPT.format(script_path=script_path)
+        )
+        self._llm.set_tool_schema_override(
+            self._tool_executor.get_pre_run_tool_schemas()
+        )
+
+        self._execution_action = None
+        while self._execution_action is None:
+            try:
+                user_input = self._input_handler.read_input("athena> ")
+            except KeyboardInterrupt:
+                self._formatter.show_info(
+                    "Press Ctrl-C again to quit, or type a command."
+                )
+                try:
+                    user_input = self._input_handler.read_input("athena> ")
+                except KeyboardInterrupt:
+                    self._execution_action = "quit"
+                    break
+
+            if user_input is None:
+                if not sys.stdin.isatty():
+                    self._execution_action = "quit"
+                    break
+                self._formatter.show_info(
+                    "EOF ignored. Use /run to start or /quit to exit."
+                )
+                continue
+
+            user_input = user_input.strip()
+            if not user_input:
+                continue
+
+            if user_input.lower() in ("quit", "exit", "q"):
+                self._execution_action = "quit"
+                break
+            if user_input.lower() in ("run",):
+                self._execution_action = "run"
+                break
+
+            if user_input.startswith("/"):
+                result = self._command_handler.handle(user_input)
+                if result is None:
+                    # Execution control command was handled
+                    break
+                if result:
+                    self._formatter._console.print(result)
+                continue
+
+            # Send to LLM (with pre-run tool set)
+            try:
+                full_response = ""
+                for chunk in self._llm.send_message_streaming(user_input):
+                    full_response += chunk
+                if full_response.strip():
+                    self._formatter.show_model_response(full_response)
+
+                action = self._tool_executor.get_execution_action()
+                if action:
+                    self._execution_action = action
+                    break
+            except KeyboardInterrupt:
+                self._formatter.show_info("Interrupted.")
+            except Exception as e:
+                self._formatter.show_error(f"LLM API error: {e}")
+
+        # Restore full tool set for runtime
+        self._llm.set_tool_schema_override(None)
+
+        if self._execution_action == "run":
+            self._execution_action = None
+            return True
+        if self._execution_action == "quit":
+            self._quitting = True
+            return False
+
+        # Unexpected action in pre-run (e.g. step/continue) — treat as run
+        self._execution_action = None
+        return True
+
     def enter_post_run_repl(self, script_path: str, reason: str) -> None:
         """Keep Athena alive after target ends until user explicitly quits."""
         self._post_run_script_path = os.path.abspath(script_path)
@@ -812,7 +907,7 @@ class DebugSession:
 
         while not self._quitting:
             try:
-                user_input = self._input_handler.read_input("athena(post)> ")
+                user_input = self._input_handler.read_input("athena> ")
             except KeyboardInterrupt:
                 self._formatter.show_info("Interrupted. Type /quit to exit.")
                 continue
@@ -927,7 +1022,9 @@ class DebugSession:
                 "User pasted/highlighted code. First run static_analyze_snippet on the "
                 "pasted code. Then use find_snippet_lines to map snippet to file lines. "
                 "If matches are found, set targeted breakpoints near the suspicious lines "
-                "and continue with runtime probing."
+                "and use runtime tools to verify. State your hypothesis before each tool "
+                "call, then analyze results before proceeding. Do not conclude without "
+                "observed runtime evidence."
                 f"{target_hint} If no current frame exists, pass filename explicitly.\n\n"
                 "Pasted code:\n```python\n"
                 f"{pasted}\n```"
@@ -936,24 +1033,24 @@ class DebugSession:
         if self._is_generic_prompt(user_input):
             if self._debugger.current_frame is not None:
                 return (
-                    "User request is generic/high-level bug finding. Follow this sequence:\n"
-                    "1) Call list_checkpoint_states to understand available restore points.\n"
-                    "2) Run static_analyze_file on the active file to identify likely hotspots.\n"
-                    "3) Set targeted breakpoints on candidate lines.\n"
-                    "4) Continue/step execution to hit those breakpoints.\n"
-                    "5) Inspect runtime state (stack, locals, inspect_variable, "
-                    "evaluate_expression) to verify or refute hypotheses.\n"
-                    "6) Only then provide conclusions/fixes with observed evidence.\n\n"
-                    "Do not stop after static analysis.\n\nUser request:\n"
-                    f"{user_input}"
+                    "User request is generic/high-level bug finding. Investigate iteratively:\n"
+                    "- Start with static_analyze_file to form initial hypotheses.\n"
+                    "- For EACH hypothesis, state it explicitly, then use a runtime tool "
+                    "(inspect_variable, evaluate_expression, get_all_locals) to gather evidence.\n"
+                    "- After each tool result, analyze what the evidence shows before deciding "
+                    "your next action.\n"
+                    "- Set breakpoints and continue/step to reach code paths you need to verify.\n"
+                    "- Do NOT conclude until you have runtime evidence. Every finding must cite "
+                    "a specific observed value, not a guess from reading code.\n\n"
+                    f"User request:\n{user_input}"
                 )
             return (
                 "User request is generic/high-level. Run static_analyze_file with explicit "
-                "filename to identify candidate breakpoints."
-                f"{target_hint}\nIf runtime is not currently paused, say so clearly and "
-                "call rerun_target to verify with breakpoints in a live run. Use "
-                "checkpoint-state tools to restore or queue a baseline if needed.\n\nUser request:\n"
-                f"{user_input}"
+                "filename to form hypotheses."
+                f"{target_hint}\nRuntime is not currently paused — you cannot verify yet. "
+                "Say so explicitly. Set breakpoints at candidate lines and call rerun_target "
+                "to start a live run where you can gather runtime evidence.\n\n"
+                f"User request:\n{user_input}"
             )
         return user_input
 

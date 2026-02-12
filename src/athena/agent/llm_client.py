@@ -40,6 +40,7 @@ class LLMClient:
         self._tool_executor: ToolExecutor | None = None
         self._tool_call_observer: Callable[[str, dict[str, Any]], None] | None = None
         self._system_prompt: str = ""
+        self._tool_schema_override: list[dict[str, Any]] | None = None
         self._max_tool_rounds = 20
         self._max_identical_write_calls = 2
         self._tool_round_count = 0
@@ -58,6 +59,16 @@ class LLMClient:
 
     def set_system_prompt(self, prompt: str) -> None:
         self._system_prompt = prompt
+
+    def set_tool_schema_override(
+        self,
+        schemas: list[dict[str, Any]] | None,
+    ) -> None:
+        """Override tool schemas sent to the LLM (e.g. for pre-run filtering).
+
+        Pass None to revert to the default (all tools from the registry).
+        """
+        self._tool_schema_override = schemas
 
     def reset_conversation(self) -> None:
         self._conversation.clear()
@@ -236,6 +247,8 @@ class LLMClient:
         return messages
 
     def _get_tools(self) -> list[dict[str, Any]]:
+        if self._tool_schema_override is not None:
+            return self._tool_schema_override
         if self._tool_executor:
             return self._tool_executor.registry.get_tool_schemas()
         return []
