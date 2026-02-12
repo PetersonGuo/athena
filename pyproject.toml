@@ -1,0 +1,51 @@
+[project]
+name = "athena-debug"
+version = "0.1.0"
+description = "Athena - AI-powered runtime debugging agent"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["debugger", "ai", "debugging", "memory-profiling", "athena"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Debuggers",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "openai>=1.0.0",
+    "rich>=13.0.0",
+    "prompt-toolkit>=3.0.0",
+]
+
+[project.optional-dependencies]
+cuda = ["torch>=2.0.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "pytest-mock",
+    "mypy",
+    "ruff",
+    "dotenv"
+]
+
+[project.scripts]
+athena = "athena.cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/athena"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
